@@ -6,7 +6,6 @@ go_library(
     name = "go_default_library",
     srcs = [
         "driver.go",
-        "driver_impl.go",
         "redisquota.go",
     ],
     deps = [
