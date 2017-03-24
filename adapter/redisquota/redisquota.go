@@ -113,7 +113,7 @@ func newAspect(env adapter.Env, c *config.Params, definitions map[string]*adapte
 
 // newAspectWithDedup returns a new aspect.
 func newAspectWithDedup(env adapter.Env, ticker *time.Ticker, c *config.Params, definitions map[string]*adapter.QuotaDefinition) (adapter.QuotasAspect, error) {
-	connPool, _ := NewConnPool(c.SocketType, c.Url, c.PoolSize)
+	connPool, _ := newConnPool(c.SocketType, c.Url, c.PoolSize)
 	rq := &redisQuota{
 		definitions: definitions,
 		cells:       make(map[string]int64),
@@ -140,7 +140,7 @@ func (rq *redisQuota) alloc(args adapter.QuotaArgs, bestEffort bool) (adapter.Qu
 		result := args.QuotaAmount
 		conn, err := rq.redisPool.get()
 		if err != nil {
-			rq.logger.Errorf("Could not get connection to redis '%v'", err)
+			rq.logger.Infof("Could not get connection to redis")
 			return 0, time.Time{}, 0
 		}
 		defer rq.redisPool.put(conn)
@@ -150,7 +150,7 @@ func (rq *redisQuota) alloc(args adapter.QuotaArgs, bestEffort bool) (adapter.Qu
 		resp, err := conn.pipeResponse()
 
 		if err != nil {
-			rq.logger.Errorf("Could not get response from redis '%v'", err)
+			rq.logger.Infof("Could not get response from redis")
 			return 0, time.Time{}, 0
 		}
 		ret := resp.int()

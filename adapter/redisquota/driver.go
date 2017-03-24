@@ -15,7 +15,6 @@
 package redisquota
 
 import (
-	"github.com/golang/glog"
 	"github.com/mediocregopher/radix.v2/pool"
 	"github.com/mediocregopher/radix.v2/redis"
 )
@@ -44,22 +43,14 @@ func (cp *connPool) get() (*connection, error) {
 
 // Put is to put a connection c back to the pool.
 func (cp *connPool) put(c *connection) {
-	impl := c
-
-	if impl.pending == 0 {
-		cp.pool.Put(impl.client)
-	} else {
-		// radix does not appear to track if we attempt to put a connection back with pipelined
-		// responses that have not been flushed. If we are in this state, just kill the connection
-		// and don't put it back in the pool.
-		if err := impl.client.Close(); err != nil {
-			glog.Errorf("Unable to close connection with redis: %v", err)
-		}
-	}
+	// TODO: radix does not appear to track if we attempt to put a connection back with pipelined
+	// responses that have not been flushed. If we are in this state, just kill the connection
+	// and don't put it back in the pool.
+	cp.pool.Put(c.client)
 }
 
 // NewConnPool creates a new connection to redis in the pool.
-func NewConnPool(redisURL string, redisSocketType string, redisPoolSize int64) (*connPool, error) {
+func newConnPool(redisURL string, redisSocketType string, redisPoolSize int64) (*connPool, error) {
 	pool, err := pool.New(redisSocketType, redisURL, int(redisPoolSize))
 	if err != nil {
 		return nil, err
@@ -67,10 +58,9 @@ func NewConnPool(redisURL string, redisSocketType string, redisPoolSize int64) (
 	return &connPool{pool}, err
 }
 
-
-func (c *connPool) empty() {
+func (cp *connPool) empty() {
 	// clean up all the connections in the pool.
-	c.pool.Empty()
+	cp.pool.Empty()
 }
 
 func (c *connection) pipeAppend(cmd string, args ...interface{}) {
