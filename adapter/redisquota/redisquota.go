@@ -172,7 +172,18 @@ func (rq *redisQuota) alloc(args adapter.QuotaArgs, bestEffort bool) (adapter.Qu
 
 		// increase the value of this key by the amount of result
 		conn.pipeAppend("INCRBY", key, result)
+		if d.Expiration != 0 {
+			conn.pipeAppend("EXPIRE", key, d.Expiration)
+		}
 		resp, _ := conn.pipeResponse()
+		// Pop of EXPIRE response
+		if d.Expiration != 0 {
+			_, err := conn.pipeResponse()
+			if err != nil {
+				rq.logger.Errorf("Could not pop response of EXPIRE: %v", err)
+			}
+		}
+
 		// TODO: propagate Connection Pool error here
 		// if err != nil {
 		//	rq.logger.Infof("Could not get response from redis")
@@ -212,7 +223,6 @@ func (rq *redisQuota) ReleaseBestEffort(args adapter.QuotaArgs) (int64, error) {
 			// decrease the value of this key by the amount of result
 			conn.pipeAppend("DECRBY", key, result)
 			resp, _ := conn.pipeResponse()
-			// TODO: propagate Connection Pool error here
 			// TODO: propagate Connection Pool error here
 			// if err != nil {
 			// 	return 0, time.Time{}, 0

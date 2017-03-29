@@ -43,6 +43,11 @@ func TestAllocAndRelease(t *testing.T) {
 		Expiration: 0,
 	}
 
+	definitions["Q3"] = &adapter.QuotaDefinition{
+		MaxAmount:  10,
+		Expiration: time.Second * 60,
+	}
+
 	b := newBuilder()
 	c := b.DefaultConfig().(*config.Params)
 	c.RedisServerUrl = s.Addr()
@@ -74,6 +79,12 @@ func TestAllocAndRelease(t *testing.T) {
 		{"Q1", "5", 0, 0, true, 0, 0, 0, 0},
 		{"Q1", "5b", 0, 0, false, 0, 0, 5, 5},
 		{"Q1", "5b", 0, 0, false, 0, 0, 5, 5},
+
+		{"Q3", "7", 10, 0, false, 0, 2, 0, 0},
+
+		{"Q3", "8", 10, 0, false, 0, 60, 0, 0},
+
+		{"Q3", "11", 100, 0, false, 0, 122, 10, 10},
 	}
 
 	labels := make(map[string]interface{})
