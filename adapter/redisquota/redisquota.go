@@ -17,6 +17,7 @@
 package redisquota
 
 import (
+	"strconv"
 	"time"
 
 	ptypes "github.com/gogo/protobuf/types"
@@ -128,29 +129,73 @@ func (rq *redisQuota) alloc(args adapter.QuotaArgs, bestEffort bool) (adapter.Qu
 		//}
 		defer rq.redisPool.put(conn)
 
-		// increase the value of this key by the amount of result
-		conn.pipeAppend("INCRBY", key, result)
-		resp, _ := conn.pipeResponse()
-		// TODO: propagate Connection Pool error here
-		// if err != nil {
-		//	rq.logger.Infof("Could not get response from redis")
-		//	return 0, time.Time{}, 0
-		//}
-		ret := resp.int()
+		// For non-expiring keys
+		if d.Expiration == 0 {
+			// increase the value of this key by the amount of result
+			conn.pipeAppend("INCRBY", key, result)
+			resp, _ := conn.pipeResponse()
 
-		if ret > d.MaxAmount {
-			if !bestEffort {
-				return 0, time.Time{}, 0
+			// TODO: propagate Connection Pool error here
+			// if err != nil {
+			//	rq.logger.Infof("Could not get response from redis")
+			//	return 0, time.Time{}, 0
+			//}
+			ret := resp.int()
+
+			if ret > d.MaxAmount {
+				if !bestEffort {
+					return 0, time.Time{}, 0
+				}
+				// grab as much as we can
+				result = d.MaxAmount - (ret - result)
+				//conn.pipeAppend("SET", key, d.MaxAmount)
+				conn.pipeAppend("DECRBY", key, (ret - d.MaxAmount))
+				resp, err := conn.pipeResponse()
+				if err != nil {
+					rq.common.Logger.Warningf("response with error %v", err)
+				}
+
+				if resp.int() != d.MaxAmount {
+					rq.common.Logger.Warningf("Could not set value to key.")
+				}
 			}
-			// grab as much as we can
-			result = d.MaxAmount - (ret - result)
-			conn.pipeAppend("SET", key, d.MaxAmount)
-			resp, _ = conn.pipeResponse()
-			if resp.int() != d.MaxAmount {
-				rq.common.Logger.Warningf("Could not set value to key.")
-			}
+
+			return result, currentTime.Add(d.Expiration), d.Expiration
 		}
 
+		// For expiring keys
+		conn.pipeAppend("MULTI")
+		exp := currentTime.Sub(time.Time{}.Add(d.Expiration))
+		expTick := time.Time{}.Add(exp).UnixNano() / util.NanosPerTick
+		rq.common.Logger.Infof("exp is: %s", expTick)
+		rq.common.Logger.Infof("time.Time is: %s", time.Time{})
+		conn.pipeAppend("ZREMRANGEBYSCORE", key, 0, expTick)
+		now := time.Time{}
+		for i := 0; i < int(result); i++ {
+			conn.pipeAppend("ZADD", key, result, now.Format(time.RFC3339) + strconv.Itoa(i))
+		}
+		//conn.pipeAppend("EXPIRE", key, math.Ceil(float64(d.Expiration) / 1000000))
+		// conn.pipeAppend("ZRANGE", key, 0, -1)
+		conn.pipeAppend("ZCARD", key)
+		conn.pipeAppend("EXEC")
+
+		for i := 4 + int(result); i >= 0; i-- {
+			resp, err := conn.pipeResponse()
+			if err != nil {
+				rq.common.Logger.Warningf("Could not execute command on redis for expiring keys: %v", err)
+			} else if i == 0 {
+				// This will be the actual response to EXEC.
+				if resp.int() > d.MaxAmount {
+					if !bestEffort {
+						return 0, time.Time{}, 0
+					}
+					// grab as much as we can
+					result = d.MaxAmount - (resp.int() - result)
+					conn.pipeAppend("REMRANGEBYRANK", key, 0, resp.int()-result)
+					conn.pipeResponse()
+				}
+			}
+		}
 		return result, currentTime.Add(d.Expiration), d.Expiration
 	})
 
@@ -172,9 +217,13 @@ func (rq *redisQuota) ReleaseBestEffort(args adapter.QuotaArgs) (int64, error) {
 			// }
 			defer rq.redisPool.put(conn)
 
+			//if d.Expiration == 0 {
 			// decrease the value of this key by the amount of result
 			conn.pipeAppend("DECRBY", key, result)
 			resp, _ := conn.pipeResponse()
+
+			//conn.pipeAppend("EXPIRE", key, d.Expiration)
+			//conn.pipeResponse()
 			// TODO: propagate Connection Pool error here
 			// if err != nil {
 			// 	return 0, time.Time{}, 0
@@ -186,10 +235,16 @@ func (rq *redisQuota) ReleaseBestEffort(args adapter.QuotaArgs) (int64, error) {
 				conn.pipeAppend("DEL", key)
 				// consume the output of previous command
 				resp, _ = conn.pipeResponse()
+
+				//conn.pipeAppend("EXPIRE", key, d.Expiration)
+				//conn.pipeResponse()
 				result += ret
 			}
 
 			return result, time.Time{}, 0
+			//}
+
+
 		})
 
 	return amount, err
